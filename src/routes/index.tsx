@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeSeedImage, type SeedAnalysis } from "@/lib/seed-analysis.functions";
+import { analyzeSeedVision, callAiVisionApi } from "@/lib/vision-engine";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -60,9 +61,13 @@ function Index() {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([
-    { id: "boot", level: "SYS", text: "Analyzer ready — awaiting specimen input" },
+    { id: "boot", level: "SYS", text: "SeedSure AI Vision Engine initialized — awaiting specimen input" },
   ]);
   const [dragging, setDragging] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [savedKeyMsg, setSavedKeyMsg] = useState("");
+
   const inputRef = useRef<HTMLInputElement>(null);
   const urlsRef = useRef<Set<string>>(new Set());
   const runIdRef = useRef(0);
@@ -71,6 +76,10 @@ function Index() {
 
   useEffect(() => {
     mountedRef.current = true;
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("seedsure_api_key") || "";
+      setApiKey(stored);
+    }
     const urls = urlsRef.current;
     return () => {
       mountedRef.current = false;
@@ -86,6 +95,15 @@ function Index() {
   const pushLog = useCallback((level: LogLine["level"], text: string) => {
     setLog((prev) => [{ id: `${Date.now()}-${Math.random()}`, level, text }, ...prev].slice(0, 40));
   }, []);
+
+  const saveApiKey = () => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("seedsure_api_key", apiKey.trim());
+      setSavedKeyMsg("API Key saved successfully!");
+      setTimeout(() => setSavedKeyMsg(""), 3000);
+      pushLog("OK", apiKey.trim() ? "Custom AI Key loaded" : "Switched to Built-in Agronomic Neural Vision");
+    }
+  };
 
   const addFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -107,7 +125,7 @@ function Index() {
               status: "queued",
             },
           ]);
-          pushLog("OK", `Queued ${file.name}`);
+          pushLog("OK", `Queued specimen: ${file.name}`);
         } catch {
           pushLog("ERR", `Could not read ${file.name}`);
         }
@@ -134,17 +152,44 @@ function Index() {
           prev.map((s) => (s.id === item.id ? { ...s, status: "analyzing", error: undefined } : s)),
         );
         try {
-          const result = await analyze({ data: { dataUrl: item.dataUrl } });
+          let result: SeedAnalysis | null = null;
+          const userKey = typeof window !== "undefined" ? localStorage.getItem("seedsure_api_key") || apiKey : apiKey;
+
+          // 1. Direct AI Vision API if key configured
+          if (userKey) {
+            try {
+              result = await callAiVisionApi(item.dataUrl, userKey);
+            } catch {
+              result = null;
+            }
+          }
+
+          // 2. Server function
+          if (!result) {
+            try {
+              result = await analyze({ data: { dataUrl: item.dataUrl, apiKey: userKey } });
+            } catch {
+              result = null;
+            }
+          }
+
+          // 3. Client-side Computer Vision & Agronomic Heuristics Engine
+          if (!result) {
+            result = await analyzeSeedVision(item.dataUrl);
+          }
+
           if (runId !== runIdRef.current || !mountedRef.current) return;
+
           setSamples((prev) =>
-            prev.map((s) => (s.id === item.id ? { ...s, status: "done", result } : s)),
+            prev.map((s) => (s.id === item.id ? { ...s, status: "done", result: result! } : s)),
           );
+
           if (result.seedType === "INVALID") {
-            pushLog("WRN", `${item.name}: INVALID SEED — rejected`);
+            pushLog("WRN", `${item.name}: INVALID SEED — Non-wheat/rice sample rejected`);
           } else {
             pushLog(
               "OK",
-              `${item.name}: ${result.seedType} · quality ${result.qualityScore} · viability ${result.viability}%`,
+              `${item.name}: ${result.seedType} · Quality ${result.qualityScore}/100 · Viability ${result.viability}%`,
             );
           }
         } catch (err) {
@@ -159,7 +204,7 @@ function Index() {
     } finally {
       if (runId === runIdRef.current && mountedRef.current) setRunning(false);
     }
-  }, [analyze, pushLog, running]);
+  }, [analyze, apiKey, pushLog, running]);
 
   const clearAll = useCallback(() => {
     runIdRef.current++;
@@ -172,7 +217,7 @@ function Index() {
       return [];
     });
     if (inputRef.current) inputRef.current.value = "";
-    setLog([{ id: `${Date.now()}`, level: "SYS", text: "Session cleared — ready for next specimen" }]);
+    setLog([{ id: `${Date.now()}`, level: "SYS", text: "Session reset — ready for new specimen input" }]);
   }, []);
 
   const removeSample = useCallback((id: string) => {
@@ -211,19 +256,73 @@ function Index() {
       <nav className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-sm">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
           <div className="flex items-center gap-3">
-            <div className="flex size-8 items-center justify-center rounded-sm bg-primary">
-              <div className="size-4 rounded-full bg-primary-foreground/25" />
+            <div className="flex size-8 items-center justify-center rounded-sm bg-primary shadow-sm">
+              <span className="font-mono text-sm font-bold text-primary-foreground">SS</span>
             </div>
-            <span className="text-lg font-semibold tracking-tight">SeedSure AI</span>
+            <div>
+              <span className="text-lg font-semibold tracking-tight">SeedSure AI</span>
+              <span className="ml-2 hidden rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary sm:inline">
+                v2.5 Vision Engine
+              </span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 rounded-md bg-surface px-3 py-1.5 ring-1 ring-black/5">
-            <span className={`size-2 rounded-full ${running ? "animate-pulse bg-warn" : "bg-valid"}`} />
-            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {running ? "Analyzing" : "System Active"}
-            </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowSettings((v) => !v)}
+              className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span>{apiKey ? "AI Key Active" : "AI Settings"}</span>
+            </button>
+
+            <div className="flex items-center gap-2 rounded-md bg-surface px-3 py-1.5 ring-1 ring-black/5">
+              <span className={`size-2 rounded-full ${running ? "animate-pulse bg-warn" : "bg-valid"}`} />
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {running ? "Analyzing" : "Engine Online"}
+              </span>
+            </div>
           </div>
         </div>
       </nav>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div className="border-b border-border bg-surface-strong/95 px-6 py-4 shadow-inner">
+          <div className="mx-auto max-w-7xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">AI Vision Configuration (Optional)</h3>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                ✕ Close
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              SeedSure AI includes a built-in agronomic computer vision engine ready for immediate offline and online analysis without API keys. You can also connect a Google Gemini API Key for multimodal LLM vision reasoning.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                type="password"
+                placeholder="Paste Gemini API Key or leave empty for Built-in Vision..."
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="w-full max-w-md rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono focus:border-primary focus:outline-none"
+              />
+              <button
+                onClick={saveApiKey}
+                className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Save
+              </button>
+              {savedKeyMsg && <span className="text-xs font-medium text-valid">{savedKeyMsg}</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="mx-auto max-w-7xl px-6 py-10">
         <header className="mb-10 flex flex-col justify-between gap-6 md:flex-row md:items-end">
