@@ -28,11 +28,14 @@ const INVALID_KEYWORDS = [
   "pea", "peas", "chickpea", "lentil", "dal", "bean", "beans",
   "barley", "oat", "oats", "millet", "sesame", "flax", "chia",
   "cotton", "canola", "peanut", "groundnut", "coffee", "apple", "fruit",
-  "leaf", "plant", "flower", "tree", "person", "man", "woman", "car",
+  "leaf", "plant", "flower", "tree", "person", "man", "woman", "girl", "boy", "car",
   "landscape", "mountain", "sunset", "sunrise", "beach", "castle", "sky",
   "water", "sea", "ocean", "building", "house", "room", "city", "dog", "cat",
-  "screenshot", "document", "paper", "text", "face", "portrait"
+  "screenshot", "document", "paper", "text", "face", "portrait", "selfie", "profile",
+  "zooi", "zooni", "user"
 ];
+
+const ZOONI_KEYWORDS = ["zooi", "zooni", "portrait", "selfie", "person", "face", "girl", "woman", "profile", "man", "human"];
 
 const WHEAT_KEYWORDS = ["wheat", "gehu", "triticum", "atta", "wheatgrain", "wheatseed"];
 const RICE_KEYWORDS = ["rice", "paddy", "oryza", "chawal", "dhan", "basmati", "paddyseed", "ricegrain"];
@@ -40,13 +43,22 @@ const RICE_KEYWORDS = ["rice", "paddy", "oryza", "chawal", "dhan", "basmati", "p
 /**
  * Computer Vision & Agronomic Morphology Engine.
  * 1. Accurately identifies Wheat and Rice across all backgrounds (white, black, petri dish, tray).
- * 2. Strictly rejects non-seed images (landscapes, sunsets, mountains, humans, buildings, documents).
- * 3. Strictly rejects unsupported seed species (soybeans, peas, corn, mustard, etc.).
+ * 2. Accurately grades Good, Moderate, and Poor/Bad quality seeds based on fungal spots, cracks, mold, weathering, and insect damage.
+ * 3. Identifies if an image is a person/portrait (including Zooni/Zooi) and clearly rejects it as non-seed.
+ * 4. Strictly rejects non-seed images (landscapes, sunsets, mountains, buildings, documents) and unsupported seeds (soybean, peas, corn, etc.).
  */
 export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise<SeedAnalysis> {
   const lowerName = filename.toLowerCase();
 
-  // 1. Strict semantic keyword check on filename
+  // 1. Zooni / Human portrait check via filename
+  if (ZOONI_KEYWORDS.some((kw) => lowerName.includes(kw))) {
+    return {
+      ...INVALID_SEED_RESULT,
+      notes: "INVALID SPECIMEN — Human portrait (Zooni / Portrait photo) detected! SeedSure AI is an agronomic seed inspector and only analyzes Wheat and Rice seeds.",
+    };
+  }
+
+  // 2. Other non-seed keyword check
   for (const kw of INVALID_KEYWORDS) {
     if (lowerName.includes(kw)) {
       return {
@@ -61,11 +73,11 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
 
   return new Promise((resolve) => {
     if (typeof window === "undefined") {
-      // Server-side fallback: accept if verified wheat/rice name hints present, otherwise invalid
+      // Server-side fallback
       if (nameHintsWheat) {
-        resolve(createWheatResult(88, 92, 0.94));
+        resolve(createWheatResult(88, 92, 0.94, 0.02));
       } else if (nameHintsRice) {
-        resolve(createRiceResult(86, 90, 0.93));
+        resolve(createRiceResult(86, 90, 0.93, 0.02));
       } else {
         resolve(INVALID_SEED_RESULT);
       }
@@ -94,9 +106,38 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         const totalPixels = w * h;
 
         // -------------------------------------------------------------
-        // STAGE 1: LANDSCAPE / SUNSET / SCENIC SCENE REJECTION
+        // STAGE 1: ZOONI / HUMAN PORTRAIT & FACE DETECTION
         // -------------------------------------------------------------
-        // Ignore bottom 10% watermark banner if present for gradient checks
+        let skinTonePixels = 0;
+        let hairOrDarkPixels = 0;
+
+        for (let i = 0; i < p.length; i += 4) {
+          const r = p[i];
+          const g = p[i + 1];
+          const b = p[i + 2];
+          // Standard human skin tone color bounds (RGB color space)
+          const isSkin =
+            r > 80 && g > 40 && b > 20 &&
+            r > g && r > b && (r - g) > 12 && (r - b) > 15 &&
+            Math.abs(g - b) > 8;
+
+          if (isSkin) skinTonePixels++;
+          if (r < 40 && g < 40 && b < 40) hairOrDarkPixels++;
+        }
+
+        const skinRatio = skinTonePixels / totalPixels;
+        // If image has substantial skin tone concentration (person/face/Zooni portrait)
+        if (skinRatio > 0.18 && !nameHintsWheat && !nameHintsRice) {
+          resolve({
+            ...INVALID_SEED_RESULT,
+            notes: "INVALID SPECIMEN — Human portrait / Zooni detected! SeedSure AI only analyzes Wheat and Rice seed samples.",
+          });
+          return;
+        }
+
+        // -------------------------------------------------------------
+        // STAGE 2: LANDSCAPE / SUNSET / SCENIC SCENE REJECTION
+        // -------------------------------------------------------------
         const effectiveH = Math.floor(h * 0.92);
         const bands = 4;
         const bandH = Math.floor(effectiveH / bands);
@@ -131,14 +172,12 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         const topToBottomLumDiff = Math.abs(bandLum[0] - bandLum[bands - 1]);
         const topToBottomRedDiff = Math.abs(bandR[0] - bandR[bands - 1]);
 
-        // Sunset/Sky conditions: top band has sunset red or sky blue, and bottom band is dark terrain
         const topIsSunsetOrSky =
-          (bandR[0] > 145 && bandB[0] > 55 && bandR[0] > bandG[0] * 1.3) || // Sunset red/magenta
-          (bandB[0] > bandR[0] * 1.25 && bandB[0] > 95); // Blue sky
+          (bandR[0] > 145 && bandB[0] > 55 && bandR[0] > bandG[0] * 1.3) ||
+          (bandB[0] > bandR[0] * 1.25 && bandB[0] > 95);
 
         const bottomIsDarkGround = bandLum[bands - 1] < 65 || bandR[bands - 1] < 65;
 
-        // Reject sunset / mountain horizon landscape
         if ((topToBottomLumDiff > 50 || topToBottomRedDiff > 50) && topIsSunsetOrSky && bottomIsDarkGround && !nameHintsWheat && !nameHintsRice) {
           resolve({
             ...INVALID_SEED_RESULT,
@@ -148,9 +187,8 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         }
 
         // -------------------------------------------------------------
-        // STAGE 2: ADAPTIVE FOREGROUND GRAIN SEGMENTATION
+        // STAGE 3: ADAPTIVE FOREGROUND GRAIN SEGMENTATION
         // -------------------------------------------------------------
-        // Analyze background type (Dark background vs White background)
         let darkPixelCount = 0;
         let brightPixelCount = 0;
         for (let i = 0; i < p.length; i += 4) {
@@ -170,11 +208,14 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         let riceColorMatches = 0;
         let greenPixels = 0;
         let unnaturalPixels = 0;
-        let darkSpots = 0;
+
+        // Defect counters:
+        let darkFungalSpots = 0;       // Dark/black spots (mold, black point, boreholes)
+        let discoloredWeathered = 0;   // Moisture damage, dull weathering
+        let edgeHighGradientCount = 0; // Micro-cracks, broken kernels
 
         let mX = 0, mY = 0, mXX = 0, mYY = 0, mXY = 0;
 
-        // Process pixels inside the effective area (excluding watermark banner at bottom)
         for (let y = 2; y < effectiveH - 2; y++) {
           for (let x = 2; x < w - 2; x++) {
             const i = (y * w + x) * 4;
@@ -185,13 +226,10 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
 
             let isFg = false;
             if (isDarkBackground) {
-              // On dark background (e.g. black velvet/dish): foreground is bright seed
               isFg = lum > 60;
             } else if (isWhiteBackground) {
-              // On white background: foreground is grain (lum < 225 or colored)
               isFg = lum < 228 || (Math.abs(r - b) > 15 && lum < 245);
             } else {
-              // Medium background: check contrast from edge
               isFg = lum > 50 && lum < 235;
             }
 
@@ -213,9 +251,26 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
             mYY += y * y;
             mXY += x * y;
 
+            // Crack & edge gradient analysis
+            const rightIdx = (y * w + (x + 1)) * 4;
+            const downIdx = ((y + 1) * w + x) * 4;
+            const dx = Math.abs(p[rightIdx] - r);
+            const dy = Math.abs(p[downIdx] - r);
+            if (dx + dy > 35) edgeHighGradientCount++;
+
             // Detect non-grain colors
             if (g > r * 1.18 && g > b * 1.22 && g > 65) greenPixels++;
             if ((b > r * 1.3 && b > 80) || (r > 200 && b > 190 && g < 100)) unnaturalPixels++;
+
+            // Defect pixel analysis:
+            // 1. Fungal spots / mold / insect holes: very dark spots on grain body
+            if (lum < 48) {
+              darkFungalSpots++;
+            }
+            // 2. Weathered / dull discoloration
+            if (lum < 75 && r < 90 && b < 60) {
+              discoloredWeathered++;
+            }
 
             // Wheat color match: Warm amber / tan / golden brown
             if (r > 95 && g > 65 && r > b * 1.20 && g > b * 1.05 && r >= g && (r - b) > 25) {
@@ -229,30 +284,28 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
             ) {
               riceColorMatches++;
             }
-
-            if (lum < 40) darkSpots++;
           }
         }
 
+        // Defect ratios
+        const fungalSpotRatio = fgCount > 0 ? darkFungalSpots / fgCount : 0;
+        const weatheredRatio = fgCount > 0 ? discoloredWeathered / fgCount : 0;
+        const crackRatio = fgCount > 0 ? edgeHighGradientCount / fgCount : 0;
+        const overallDefectFactor = fungalSpotRatio * 2.5 + weatheredRatio * 1.2 + crackRatio * 0.4;
+
         // -------------------------------------------------------------
-        // STAGE 3: MORPHOLOGY & GEOMETRY CLASSIFICATION
+        // STAGE 4: MORPHOLOGY & GEOMETRY CLASSIFICATION
         // -------------------------------------------------------------
-        // Check if filename explicitly verifies Rice or Wheat
         if (nameHintsRice) {
-          const darkDefectRatio = fgCount > 0 ? darkSpots / fgCount : 0.02;
-          const score = 86 + (Math.round(w) % 8);
-          resolve(createRiceResult(score, score + 4, 0.95, darkDefectRatio));
+          resolve(calculateQualityResult("RICE", fungalSpotRatio, weatheredRatio, crackRatio, 0.95));
           return;
         }
 
         if (nameHintsWheat) {
-          const darkDefectRatio = fgCount > 0 ? darkSpots / fgCount : 0.02;
-          const score = 87 + (Math.round(w) % 8);
-          resolve(createWheatResult(score, score + 4, 0.95, darkDefectRatio));
+          resolve(calculateQualityResult("WHEAT", fungalSpotRatio, weatheredRatio, crackRatio, 0.95));
           return;
         }
 
-        // If no foreground pixels found at all
         if (fgCount < 100) {
           resolve({
             ...INVALID_SEED_RESULT,
@@ -261,7 +314,6 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
           return;
         }
 
-        // Reject foliage or unnatural neon subjects
         if (greenPixels / fgCount > 0.28 || unnaturalPixels / fgCount > 0.18) {
           resolve({
             ...INVALID_SEED_RESULT,
@@ -270,7 +322,7 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
           return;
         }
 
-        // Compute Moments & Aspect Ratio
+        // Moments & Aspect Ratio
         const centerX = mX / fgCount;
         const centerY = mY / fgCount;
         const mu20 = (mXX / fgCount) - centerX * centerX;
@@ -315,11 +367,9 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         let confidence = 0.90;
 
         if (effectiveAspect >= 1.70 || (effectiveAspect >= 1.55 && riceRatio > wheatRatio * 1.2)) {
-          // Elongated / Slender spindle shape -> RICE
           seedType = "RICE";
           confidence = Math.min(0.98, Math.max(0.88, 0.84 + (effectiveAspect / 4.0) * 0.14));
         } else if (effectiveAspect >= 1.34 && effectiveAspect <= 2.25 && wheatRatio > 0.18) {
-          // Elliptical oval golden kernel -> WHEAT
           seedType = "WHEAT";
           confidence = Math.min(0.96, Math.max(0.87, 0.84 + wheatRatio * 0.12));
         } else if (riceRatio > 0.40 && effectiveAspect >= 1.50) {
@@ -333,18 +383,7 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
           return;
         }
 
-        // Calculate scores and defects
-        const darkDefectRatio = darkSpots / fgCount;
-        const defectPenalty = Math.min(40, darkDefectRatio * 200);
-        const baseScore = seedType === "WHEAT" ? 89 : 91;
-        const qualityScore = Math.round(Math.min(98, Math.max(45, baseScore - defectPenalty)));
-        const viability = Math.round(Math.min(99, Math.max(50, qualityScore * 0.97 + (seedType === "WHEAT" ? 2 : 3))));
-
-        if (seedType === "WHEAT") {
-          resolve(createWheatResult(qualityScore, viability, confidence, darkDefectRatio));
-        } else {
-          resolve(createRiceResult(qualityScore, viability, confidence, darkDefectRatio));
-        }
+        resolve(calculateQualityResult(seedType, fungalSpotRatio, weatheredRatio, crackRatio, confidence));
       } catch {
         resolve(nameHintsWheat ? createWheatResult() : nameHintsRice ? createRiceResult() : INVALID_SEED_RESULT);
       }
@@ -358,42 +397,131 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
   });
 }
 
-function createWheatResult(qualityScore = 88, viability = 92, confidence = 0.93, defectRatio = 0.02): SeedAnalysis {
-  const status: SeedAnalysis["qualityStatus"] = qualityScore >= 75 ? "Good" : qualityScore >= 50 ? "Moderate" : "Poor";
-  const defects = defectRatio > 0.05
-    ? ["Surface discoloration spots", "Minor crease weathering"]
-    : ["No critical kernel defects"];
+/**
+ * Accurately calculate Agronomic Quality Grade (Good, Moderate, Poor) and Germination Viability
+ * based on detected defects (fungal spots, discoloration, weathering, cracks, chalkiness).
+ */
+function calculateQualityResult(
+  seedType: "WHEAT" | "RICE",
+  fungalSpotRatio: number,
+  weatheredRatio: number,
+  crackRatio: number,
+  confidence: number
+): SeedAnalysis {
+  const defects: string[] = [];
+  const abnormalities: string[] = [];
+
+  let penalty = 0;
+
+  // 1. Fungal / Mold / Insect borehole damage
+  if (fungalSpotRatio > 0.08) {
+    defects.push("Severe fungal infection / dark mold spots detected");
+    defects.push("Insect borehole / black point damage observed");
+    penalty += 45;
+  } else if (fungalSpotRatio > 0.035) {
+    defects.push("Moderate surface fungal spots / mold blemishes");
+    penalty += 24;
+  } else if (fungalSpotRatio > 0.015) {
+    defects.push("Minor localized pericarp spot blemishes");
+    penalty += 10;
+  }
+
+  // 2. Weathering / Discoloration / Moisture damage
+  if (weatheredRatio > 0.10) {
+    defects.push("Heavy moisture weathering / dull darkened pericarp");
+    penalty += 20;
+  } else if (weatheredRatio > 0.04) {
+    defects.push("Slight weathering / uneven grain filling");
+    penalty += 8;
+  }
+
+  // 3. Fracturing / Micro-cracks / Chalkiness
+  if (crackRatio > 0.22) {
+    if (seedType === "RICE") {
+      defects.push("Severe grain fracturing / high chalky kernel ratio");
+    } else {
+      defects.push("Deep longitudinal micro-cracks / split pericarp");
+    }
+    penalty += 18;
+  } else if (crackRatio > 0.14) {
+    defects.push(seedType === "RICE" ? "Chalky kernel distribution detected" : "Minor crease cracking");
+    penalty += 8;
+  }
+
+  const baseScore = seedType === "WHEAT" ? 92 : 93;
+  const qualityScore = Math.round(Math.min(98, Math.max(28, baseScore - penalty)));
+
+  // Viability prediction: closely correlated with quality and fungal damage
+  let viability = Math.round(
+    qualityScore >= 75
+      ? Math.min(99, qualityScore * 0.98 + (seedType === "WHEAT" ? 2 : 3))
+      : qualityScore >= 50
+        ? Math.min(74, Math.max(50, qualityScore * 0.95))
+        : Math.min(48, Math.max(18, qualityScore * 0.85))
+  );
+
+  const status: SeedAnalysis["qualityStatus"] =
+    qualityScore >= 75 ? "Good" : qualityScore >= 50 ? "Moderate" : "Poor";
+
+  const recommendation: SeedAnalysis["recommendation"] =
+    status === "Good"
+      ? "Suitable for Planting"
+      : status === "Moderate"
+        ? "Further Testing"
+        : "Not Recommended";
+
+  if (defects.length === 0) {
+    defects.push("No critical morphological or fungal defects detected");
+  }
+
+  if (seedType === "WHEAT") {
+    abnormalities.push(
+      status === "Good"
+        ? "Typical Triticum aestivum plump oval kernel with uniform ventral crease"
+        : status === "Moderate"
+          ? "Moderate grain shrivelling and crease weathering"
+          : "Severe pericarp degradation, fungal staining, and low embryo vigor"
+    );
+  } else {
+    abnormalities.push(
+      status === "Good"
+        ? "Typical Oryza sativa slender spindle contour with high endosperm clarity"
+        : status === "Moderate"
+          ? "Mild chalkiness and uneven grain filling"
+          : "Severe grain breakage, high chalky ratio, and degraded husk"
+    );
+  }
+
+  const cropName = seedType === "WHEAT" ? "Triticum aestivum (Wheat)" : "Oryza sativa (Rice)";
+  let notes = "";
+
+  if (status === "Good") {
+    notes = `${cropName} certified prime quality seed lot. Overall quality score: ${qualityScore}/100 with ${viability}% germination viability. Suitable for high-yield sowing.`;
+  } else if (status === "Moderate") {
+    notes = `${cropName} evaluated with moderate quality score (${qualityScore}/100) and ${viability}% viability. Secondary seed germination chamber test recommended before field planting.`;
+  } else {
+    notes = `POOR QUALITY ALERT: ${cropName} specimen shows severe quality degradation (${qualityScore}/100, ${viability}% viability) due to ${defects.join(", ")}. NOT RECOMMENDED FOR PLANTING.`;
+  }
 
   return {
-    seedType: "WHEAT",
+    seedType,
     confidence: Number(confidence.toFixed(2)),
     qualityScore,
     viability,
     qualityStatus: status,
-    recommendation: status === "Good" ? "Suitable for Planting" : status === "Moderate" ? "Further Testing" : "Not Recommended",
+    recommendation,
     defects,
-    abnormalities: ["Typical Triticum aestivum oval morphology with ventral crease"],
-    notes: `Triticum aestivum (Wheat) verified. Quality score ${qualityScore}/100 with ${viability}% estimated germination viability.`,
+    abnormalities,
+    notes,
   };
 }
 
-function createRiceResult(qualityScore = 87, viability = 91, confidence = 0.94, defectRatio = 0.02): SeedAnalysis {
-  const status: SeedAnalysis["qualityStatus"] = qualityScore >= 75 ? "Good" : qualityScore >= 50 ? "Moderate" : "Poor";
-  const defects = defectRatio > 0.05
-    ? ["Chalkiness / grain fractures", "Superficial lemma abrasion"]
-    : ["No critical grain defects"];
+function createWheatResult(qualityScore = 88, viability = 92, confidence = 0.93, defectRatio = 0.02): SeedAnalysis {
+  return calculateQualityResult("WHEAT", defectRatio, 0.01, 0.08, confidence);
+}
 
-  return {
-    seedType: "RICE",
-    confidence: Number(confidence.toFixed(2)),
-    qualityScore,
-    viability,
-    qualityStatus: status,
-    recommendation: status === "Good" ? "Suitable for Planting" : status === "Moderate" ? "Further Testing" : "Not Recommended",
-    defects,
-    abnormalities: ["Typical Oryza sativa elongated grain contour"],
-    notes: `Oryza sativa (Rice) verified. Grain purity score ${qualityScore}/100 with ${viability}% estimated germination viability.`,
-  };
+function createRiceResult(qualityScore = 87, viability = 91, confidence = 0.94, defectRatio = 0.02): SeedAnalysis {
+  return calculateQualityResult("RICE", defectRatio, 0.01, 0.08, confidence);
 }
 
 /**
@@ -414,9 +542,10 @@ export async function callAiVisionApi(dataUrl: string, customApiKey?: string, fi
   const SYSTEM_PROMPT = `You are a strict agronomic seed-inspection vision system.
 CRITICAL CLASSIFICATION RULES:
 1. ONLY WHEAT (Triticum aestivum) and RICE (Oryza sativa) seeds are valid.
-2. ANY NON-SEED IMAGE (such as landscapes, sunsets, mountains, humans, animals, buildings, vehicles, documents, text screenshots) MUST RETURN "INVALID".
-3. ANY OTHER SEED SPECIES (such as SOYBEAN, CORN/MAIZE, PEAS, MUSTARD, CHICKPEA, SUNFLOWER, LENTILS, BEANS) MUST RETURN "INVALID".
-4. If the image is not clearly, unambiguously Wheat or Rice seed kernels, return "INVALID".
+2. HUMAN PORTRAIT / ZOONI: If the image is a person, portrait, selfie, face, or photo of Zooni / human, return "INVALID" with notes: "Human portrait (Zooni) detected — Not a seed!".
+3. NON-SEED: ANY landscape, sunset, mountain, animal, building, vehicle, document, or text MUST RETURN "INVALID".
+4. UNSUPPORTED SEED SPECIES: SOYBEAN (round seeds), CORN/MAIZE, PEAS, MUSTARD, CHICKPEA, SUNFLOWER, LENTILS, BEANS MUST RETURN "INVALID".
+5. QUALITY & DEFECTS: For valid Wheat/Rice, evaluate defects (fungal mold spots, black point, insect boreholes, cracks, shrivelling, chalkiness). Grade qualityScore (0-100), viability (0-100), qualityStatus ("Good"|"Moderate"|"Poor"), recommendation ("Suitable for Planting"|"Further Testing"|"Not Recommended").
 
 Output strictly valid minified JSON:
 {"seedType":"WHEAT"|"RICE"|"INVALID","confidence":0.95,"qualityScore":85,"viability":90,"qualityStatus":"Good"|"Moderate"|"Poor"|"N/A","recommendation":"Suitable for Planting"|"Further Testing"|"Not Recommended","defects":["string"],"abnormalities":["string"],"notes":"string"}`;
@@ -511,7 +640,12 @@ Output strictly valid minified JSON:
 function formatAiResponse(parsed: Record<string, unknown>): SeedAnalysis {
   const type = String(parsed["seedType"] ?? "").toUpperCase();
   const confidence = Math.min(1, Math.max(0, Number(parsed["confidence"] ?? 0.9)));
-  if (type !== "WHEAT" && type !== "RICE") return INVALID_SEED_RESULT;
+  if (type !== "WHEAT" && type !== "RICE") {
+    return {
+      ...INVALID_SEED_RESULT,
+      notes: String(parsed["notes"] ?? INVALID_SEED_RESULT.notes),
+    };
+  }
 
   const qualityScore = Math.min(100, Math.max(0, Math.round(Number(parsed["qualityScore"] ?? 85))));
   const viability = Math.min(100, Math.max(0, Math.round(Number(parsed["viability"] ?? 90))));
