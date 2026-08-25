@@ -596,9 +596,11 @@ function ResultCard({ sample }: { sample?: Sample | undefined }) {
             <span className="text-2xl">⚠️</span>
             <div>
               <p className="text-base font-semibold text-invalid">
-                {r.notes.includes("Zooni") || r.notes.includes("Human")
-                  ? "HUMAN PORTRAIT (ZOONI) DETECTED"
-                  : "INVALID SPECIMEN — Only Wheat and Rice are supported"}
+                {r.notes.toLowerCase().includes("human")
+                  ? "HUMAN DETECTED — PLEASE UPLOAD A SEED IMAGE"
+                  : r.notes.toLowerCase().includes("invalid seed")
+                    ? "INVALID SEED — ONLY WHEAT AND RICE ARE SUPPORTED"
+                    : "PLEASE UPLOAD AN IMAGE OF A SEED"}
               </p>
               <p className="mt-1 text-sm text-secondary-foreground">
                 {r.notes ||
