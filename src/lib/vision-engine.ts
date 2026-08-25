@@ -256,31 +256,46 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
             const downIdx = ((y + 1) * w + x) * 4;
             const dx = Math.abs(p[rightIdx] - r);
             const dy = Math.abs(p[downIdx] - r);
-            if (dx + dy > 35) edgeHighGradientCount++;
+            const edgeMag = dx + dy;
+            if (edgeMag > 32) edgeHighGradientCount++;
 
             // Detect non-grain colors
             if (g > r * 1.18 && g > b * 1.22 && g > 65) greenPixels++;
             if ((b > r * 1.3 && b > 80) || (r > 200 && b > 190 && g < 100)) unnaturalPixels++;
 
-            // Defect pixel analysis:
-            // 1. Fungal spots / mold / insect holes: very dark spots on grain body
-            if (lum < 48) {
+            // Enhanced Defect Pixel Analysis:
+            // 1. Black point / dark fungal rot / insect boreholes: dark necrotic spots on seed body
+            const isDarkNecrosis = lum < 68;
+
+            // 2. Gray / ashy mold mycelium & fungal hyphae (e.g. hairy gray mold on wheat brush/crease):
+            // Healthy wheat has warm golden hue (r - b > 25, r > 100).
+            // Gray/ashy mold mycelium has dull desaturated gray/black tones (r - b < 18 or |r - g| < 12 and |g - b| < 12)
+            // combined with fine hyphal texture (edgeMag > 20) or low luminance (lum < 135).
+            const isGrayMoldMycelium =
+              lum >= 40 &&
+              lum <= 145 &&
+              (r - b <= 20 || (Math.abs(r - g) <= 12 && Math.abs(g - b) <= 12)) &&
+              (edgeMag > 18 || lum < 100);
+
+            if (isDarkNecrosis || isGrayMoldMycelium) {
               darkFungalSpots++;
             }
-            // 2. Weathered / dull discoloration
-            if (lum < 75 && r < 90 && b < 60) {
+
+            // 3. Weathered / moisture-damaged dull discoloration
+            if (lum < 88 && (r < 95 || b < 65 || r - b < 16)) {
               discoloredWeathered++;
             }
 
             // Wheat color match: Warm amber / tan / golden brown
-            if (r > 95 && g > 65 && r > b * 1.20 && g > b * 1.05 && r >= g && (r - b) > 25) {
+            if (r > 95 && g > 65 && r > b * 1.20 && g > b * 1.05 && r >= g && (r - b) > 25 && !isGrayMoldMycelium && !isDarkNecrosis) {
               wheatColorMatches++;
             }
 
             // Rice color match: Translucent white/ivory or golden straw paddy husk
             if (
-              (lum > 130 && Math.abs(r - g) < 32 && Math.abs(g - b) < 32) ||
-              (lum > 115 && r > 130 && g > 115 && r > b * 1.15)
+              ((lum > 130 && Math.abs(r - g) < 32 && Math.abs(g - b) < 32) ||
+              (lum > 115 && r > 130 && g > 115 && r > b * 1.15)) &&
+              !isDarkNecrosis
             ) {
               riceColorMatches++;
             }
@@ -291,7 +306,6 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         const fungalSpotRatio = fgCount > 0 ? darkFungalSpots / fgCount : 0;
         const weatheredRatio = fgCount > 0 ? discoloredWeathered / fgCount : 0;
         const crackRatio = fgCount > 0 ? edgeHighGradientCount / fgCount : 0;
-        const overallDefectFactor = fungalSpotRatio * 2.5 + weatheredRatio * 1.2 + crackRatio * 0.4;
 
         // -------------------------------------------------------------
         // STAGE 4: MORPHOLOGY & GEOMETRY CLASSIFICATION
@@ -369,13 +383,13 @@ export async function analyzeSeedVision(dataUrl: string, filename = ""): Promise
         if (effectiveAspect >= 1.70 || (effectiveAspect >= 1.55 && riceRatio > wheatRatio * 1.2)) {
           seedType = "RICE";
           confidence = Math.min(0.98, Math.max(0.88, 0.84 + (effectiveAspect / 4.0) * 0.14));
-        } else if (effectiveAspect >= 1.34 && effectiveAspect <= 2.25 && wheatRatio > 0.18) {
+        } else if (effectiveAspect >= 1.34 && effectiveAspect <= 2.25 && (wheatRatio > 0.15 || fungalSpotRatio > 0.05)) {
           seedType = "WHEAT";
           confidence = Math.min(0.96, Math.max(0.87, 0.84 + wheatRatio * 0.12));
-        } else if (riceRatio > 0.40 && effectiveAspect >= 1.50) {
+        } else if (riceRatio > 0.35 && effectiveAspect >= 1.50) {
           seedType = "RICE";
           confidence = 0.88;
-        } else if (wheatRatio > 0.35 && effectiveAspect >= 1.34) {
+        } else if (wheatRatio > 0.30 && effectiveAspect >= 1.34) {
           seedType = "WHEAT";
           confidence = 0.88;
         } else {
@@ -413,24 +427,26 @@ function calculateQualityResult(
 
   let penalty = 0;
 
-  // 1. Fungal / Mold / Insect borehole damage
-  if (fungalSpotRatio > 0.08) {
-    defects.push("Severe fungal infection / dark mold spots detected");
-    defects.push("Insect borehole / black point damage observed");
-    penalty += 45;
-  } else if (fungalSpotRatio > 0.035) {
-    defects.push("Moderate surface fungal spots / mold blemishes");
-    penalty += 24;
-  } else if (fungalSpotRatio > 0.015) {
-    defects.push("Minor localized pericarp spot blemishes");
+  // 1. Fungal / Mold / Black Point / Mycelium damage
+  if (fungalSpotRatio > 0.045) {
+    defects.push("Severe fungal mold growth / mycelium on kernel tip & pericarp");
+    defects.push("Black point / fungal smut necrosis detected");
+    defects.push("High seed-borne pathogen & embryo spoilage risk");
+    penalty += 55;
+  } else if (fungalSpotRatio > 0.02) {
+    defects.push("Moderate fungal spotting / mold blemishes");
+    defects.push("Minor pericarp discoloration");
+    penalty += 26;
+  } else if (fungalSpotRatio > 0.008) {
+    defects.push("Minor localized surface blemishes");
     penalty += 10;
   }
 
   // 2. Weathering / Discoloration / Moisture damage
-  if (weatheredRatio > 0.10) {
+  if (weatheredRatio > 0.08) {
     defects.push("Heavy moisture weathering / dull darkened pericarp");
-    penalty += 20;
-  } else if (weatheredRatio > 0.04) {
+    penalty += 18;
+  } else if (weatheredRatio > 0.035) {
     defects.push("Slight weathering / uneven grain filling");
     penalty += 8;
   }
@@ -442,23 +458,24 @@ function calculateQualityResult(
     } else {
       defects.push("Deep longitudinal micro-cracks / split pericarp");
     }
-    penalty += 18;
+    penalty += 16;
   } else if (crackRatio > 0.14) {
     defects.push(seedType === "RICE" ? "Chalky kernel distribution detected" : "Minor crease cracking");
     penalty += 8;
   }
 
-  const baseScore = seedType === "WHEAT" ? 92 : 93;
-  const qualityScore = Math.round(Math.min(98, Math.max(28, baseScore - penalty)));
+  const baseScore = seedType === "WHEAT" ? 94 : 93;
+  const qualityScore = Math.round(Math.min(98, Math.max(25, baseScore - penalty)));
 
-  // Viability prediction: closely correlated with quality and fungal damage
-  let viability = Math.round(
-    qualityScore >= 75
-      ? Math.min(99, qualityScore * 0.98 + (seedType === "WHEAT" ? 2 : 3))
-      : qualityScore >= 50
-        ? Math.min(74, Math.max(50, qualityScore * 0.95))
-        : Math.min(48, Math.max(18, qualityScore * 0.85))
-  );
+  // Viability prediction: heavily impaired by fungal mold and black point
+  let viability: number;
+  if (qualityScore < 50 || fungalSpotRatio > 0.045) {
+    viability = Math.round(Math.min(45, Math.max(15, qualityScore * 0.85)));
+  } else if (qualityScore < 75) {
+    viability = Math.round(Math.min(74, Math.max(50, qualityScore * 0.94)));
+  } else {
+    viability = Math.round(Math.min(99, qualityScore * 0.98 + (seedType === "WHEAT" ? 2 : 3)));
+  }
 
   const status: SeedAnalysis["qualityStatus"] =
     qualityScore >= 75 ? "Good" : qualityScore >= 50 ? "Moderate" : "Poor";
@@ -480,7 +497,7 @@ function calculateQualityResult(
         ? "Typical Triticum aestivum plump oval kernel with uniform ventral crease"
         : status === "Moderate"
           ? "Moderate grain shrivelling and crease weathering"
-          : "Severe pericarp degradation, fungal staining, and low embryo vigor"
+          : "Fungal hyphae / mold mycelium covering brush end, severe necrosis & degraded embryo"
     );
   } else {
     abnormalities.push(
@@ -500,7 +517,7 @@ function calculateQualityResult(
   } else if (status === "Moderate") {
     notes = `${cropName} evaluated with moderate quality score (${qualityScore}/100) and ${viability}% viability. Secondary seed germination chamber test recommended before field planting.`;
   } else {
-    notes = `POOR QUALITY ALERT: ${cropName} specimen shows severe quality degradation (${qualityScore}/100, ${viability}% viability) due to ${defects.join(", ")}. NOT RECOMMENDED FOR PLANTING.`;
+    notes = `POOR QUALITY ALERT: ${cropName} specimen shows severe fungal mold infestation (${qualityScore}/100 quality, ${viability}% viability). High risk of seed-borne disease and germination failure. NOT RECOMMENDED FOR PLANTING.`;
   }
 
   return {
