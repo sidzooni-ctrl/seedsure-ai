@@ -32,10 +32,10 @@ const INVALID_KEYWORDS = [
   "landscape", "mountain", "sunset", "sunrise", "beach", "castle", "sky",
   "water", "sea", "ocean", "building", "house", "room", "city", "dog", "cat",
   "screenshot", "document", "paper", "text", "face", "portrait", "selfie", "profile",
-  "zooi", "zooni", "user"
+  "zooi", "zooni", "zoom", "zoon", "user"
 ];
 
-const ZOONI_KEYWORDS = ["zooi", "zooni", "portrait", "selfie", "person", "face", "girl", "woman", "profile", "man", "human"];
+const ZOONI_KEYWORDS = ["zooi", "zooni", "zoom", "zoon", "portrait", "selfie", "person", "face", "girl", "woman", "profile", "man", "human"];
 
 const WHEAT_KEYWORDS = ["wheat", "gehu", "triticum", "atta", "wheatgrain", "wheatseed"];
 const RICE_KEYWORDS = ["rice", "paddy", "oryza", "chawal", "dhan", "basmati", "paddyseed", "ricegrain"];

@@ -591,82 +591,107 @@ function ResultCard({ sample }: { sample?: Sample | undefined }) {
       </div>
 
       {invalid ? (
-        <div className="space-y-3 p-8">
-          <p className="text-xl font-semibold text-invalid">
-            INVALID SEED — Only Wheat and Rice seeds are supported.
-          </p>
-          <p className="text-sm text-secondary-foreground">
-            {r.notes ||
-              "The sample could not be confidently identified as wheat or rice. Re-shoot with a clear, well-lit, close-up image of the seeds."}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-10 p-8 md:grid-cols-2">
-          <div className="space-y-8">
+        <div className="space-y-4 p-8">
+          <div className="flex items-start gap-3 rounded-lg border border-invalid/30 bg-invalid/5 p-4">
+            <span className="text-2xl">⚠️</span>
             <div>
-              <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Viability Prediction
-              </span>
-              <div className="flex items-baseline gap-2">
-                <span className="text-5xl font-semibold tracking-tighter">{r.viability}</span>
-                <span className="text-xl text-muted-foreground">%</span>
-              </div>
-              <Meter value={r.viability} status={r.qualityStatus} />
-            </div>
-
-            <div>
-              <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Overall Quality Score
-              </span>
-              <div className="flex items-baseline gap-2">
-                <span className="font-mono text-2xl font-medium">{r.qualityScore}</span>
-                <span className="text-sm text-muted-foreground">/ 100</span>
-              </div>
-              <Meter value={r.qualityScore} status={r.qualityStatus} />
-            </div>
-
-            <div className="space-y-3">
-              <span className="block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Identified Defects
-              </span>
-              <ul className="space-y-2">
-                {(r.defects.length ? r.defects : ["No significant defects detected"]).map((d) => (
-                  <li key={d} className="flex items-center gap-3 text-sm text-secondary-foreground">
-                    <span className="size-1.5 shrink-0 rounded-full bg-border" />
-                    {d}
-                  </li>
-                ))}
-              </ul>
+              <p className="text-base font-semibold text-invalid">
+                {r.notes.includes("Zooni") || r.notes.includes("Human")
+                  ? "HUMAN PORTRAIT (ZOONI) DETECTED"
+                  : "INVALID SPECIMEN — Only Wheat and Rice are supported"}
+              </p>
+              <p className="mt-1 text-sm text-secondary-foreground">
+                {r.notes ||
+                  "The sample could not be recognized as wheat or rice. Please upload a clear close-up image of seeds."}
+              </p>
             </div>
           </div>
+        </div>
+      ) : (
+        <div className="space-y-6 p-8">
+          {r.qualityStatus === "Poor" && (
+            <div className="flex items-center gap-3 rounded-lg border border-invalid/40 bg-invalid-soft p-4 text-invalid">
+              <span className="text-xl font-bold">⚠️</span>
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider">Poor Quality Seed Lot Alert</span>
+                <p className="text-xs text-secondary-foreground">
+                  High defect rate observed (fungal spots / mold / micro-cracks). Not recommended for planting.
+                </p>
+              </div>
+            </div>
+          )}
 
-          <div className="space-y-6 rounded-lg bg-surface-strong p-6 ring-1 ring-black/5">
-            <div>
-              <span className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Quality Status
-              </span>
-              <span className={`font-medium ${tone}`}>{r.qualityStatus}</span>
+          <div className="grid grid-cols-1 gap-10 md:grid-cols-2">
+            <div className="space-y-8">
+              <div>
+                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Viability Prediction
+                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-5xl font-semibold tracking-tighter">{r.viability}</span>
+                  <span className="text-xl text-muted-foreground">%</span>
+                </div>
+                <Meter value={r.viability} status={r.qualityStatus} />
+              </div>
+
+              <div>
+                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Overall Quality Score
+                </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-2xl font-medium">{r.qualityScore}</span>
+                  <span className="text-sm text-muted-foreground">/ 100</span>
+                </div>
+                <Meter value={r.qualityScore} status={r.qualityStatus} />
+              </div>
+
+              <div className="space-y-3">
+                <span className="block text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Identified Defects
+                </span>
+                <ul className="space-y-2">
+                  {(r.defects.length ? r.defects : ["No significant defects detected"]).map((d) => (
+                    <li key={d} className="flex items-center gap-3 text-sm text-secondary-foreground">
+                      <span
+                        className={`size-2 shrink-0 rounded-full ${
+                          r.qualityStatus === "Poor" ? "bg-invalid" : r.qualityStatus === "Moderate" ? "bg-warn" : "bg-valid"
+                        }`}
+                      />
+                      {d}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-            <div>
-              <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Visible Abnormalities
-              </span>
-              <ul className="space-y-1.5">
-                {(r.abnormalities.length ? r.abnormalities : ["None observed"]).map((a) => (
-                  <li key={a} className="text-sm text-secondary-foreground">
-                    {a}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Recommendation
-              </span>
-              <p className="text-sm font-medium leading-relaxed">{r.recommendation}</p>
-              {r.notes && (
-                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{r.notes}</p>
-              )}
+
+            <div className="space-y-6 rounded-lg bg-surface-strong p-6 ring-1 ring-black/5">
+              <div>
+                <span className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Quality Status
+                </span>
+                <span className={`font-medium ${tone}`}>{r.qualityStatus}</span>
+              </div>
+              <div>
+                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Visible Abnormalities
+                </span>
+                <ul className="space-y-1.5">
+                  {(r.abnormalities.length ? r.abnormalities : ["None observed"]).map((a) => (
+                    <li key={a} className="text-sm text-secondary-foreground">
+                      {a}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
+                  Recommendation
+                </span>
+                <p className="text-sm font-medium leading-relaxed">{r.recommendation}</p>
+                {r.notes && (
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{r.notes}</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
