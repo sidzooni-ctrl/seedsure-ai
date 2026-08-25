@@ -155,27 +155,31 @@ function Index() {
           let result: SeedAnalysis | null = null;
           const userKey = typeof window !== "undefined" ? localStorage.getItem("seedsure_api_key") || apiKey : apiKey;
 
-          // 1. Direct AI Vision API if key configured
+          // 1. Direct Live Multimodal AI Vision API if API Key is configured
           if (userKey) {
             try {
-              result = await callAiVisionApi(item.dataUrl, userKey);
+              result = await callAiVisionApi(item.dataUrl, userKey, item.name);
             } catch {
               result = null;
             }
           }
 
-          // 2. Server function
+          // 2. High-Precision Client-Side Canvas & Morphology Vision Engine
+          if (!result && typeof window !== "undefined") {
+            try {
+              result = await analyzeSeedVision(item.dataUrl, item.name);
+            } catch {
+              result = null;
+            }
+          }
+
+          // 3. Server function fallback
           if (!result) {
             try {
-              result = await analyze({ data: { dataUrl: item.dataUrl, apiKey: userKey } });
+              result = await analyze({ data: { dataUrl: item.dataUrl, apiKey: userKey, filename: item.name } });
             } catch {
-              result = null;
+              result = await analyzeSeedVision(item.dataUrl, item.name);
             }
-          }
-
-          // 3. Client-side Computer Vision & Agronomic Heuristics Engine
-          if (!result) {
-            result = await analyzeSeedVision(item.dataUrl);
           }
 
           if (runId !== runIdRef.current || !mountedRef.current) return;

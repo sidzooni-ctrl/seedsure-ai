@@ -1,4 +1,4 @@
-﻿import { createServerFn } from "@tanstack/react-start";
+import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import {
   analyzeSeedVision,
@@ -16,6 +16,7 @@ const InputSchema = z.object({
     .max(12_000_000)
     .refine((v) => v.startsWith("data:image/"), "Must be an image data URL"),
   apiKey: z.string().optional(),
+  filename: z.string().optional(),
 });
 
 export const analyzeSeedImage = createServerFn({ method: "POST" })
@@ -23,7 +24,7 @@ export const analyzeSeedImage = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SeedAnalysis> => {
     try {
       // 1. Try Live AI Vision API (Gemini / Lovable / OpenAI) if an API key is available
-      const aiResult = await callAiVisionApi(data.dataUrl, data.apiKey);
+      const aiResult = await callAiVisionApi(data.dataUrl, data.apiKey, data.filename);
       if (aiResult) {
         return aiResult;
       }
@@ -33,7 +34,7 @@ export const analyzeSeedImage = createServerFn({ method: "POST" })
 
     // 2. High-performance Agronomic Computer Vision Analysis Engine
     try {
-      return await analyzeSeedVision(data.dataUrl);
+      return await analyzeSeedVision(data.dataUrl, data.filename);
     } catch {
       return INVALID_SEED_RESULT;
     }
