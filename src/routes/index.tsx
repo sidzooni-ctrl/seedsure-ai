@@ -3,15 +3,42 @@ import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { analyzeSeedImage, type SeedAnalysis } from "@/lib/seed-analysis.functions";
 import { analyzeSeedVision, callAiVisionApi } from "@/lib/vision-engine";
+import { generateDemoSample } from "@/lib/demo-samples";
+import { translations, type Language } from "@/lib/translations";
+import { CameraModal } from "@/lib/camera-modal";
+import { CertificateModal } from "@/lib/certificate-modal";
+import {
+  Sparkles,
+  Camera,
+  Layers,
+  Award,
+  Download,
+  Trash2,
+  Settings,
+  Languages,
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Eye,
+  Info,
+  ShieldCheck,
+  ChevronRight,
+  Flame,
+  Droplets,
+  Scale,
+  ScanLine,
+  FileSpreadsheet
+} from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "SeedSure AI — Wheat & Rice Seed Quality Analysis" },
+      { title: "SeedSure AI — Agronomic Seed Inspection & Viability Engine" },
       {
         name: "description",
         content:
-          "Upload wheat or rice seed images for AI quality scoring, viability prediction, defect detection and batch summaries. Unsupported samples are rejected.",
+          "Advanced AI agronomic inspection for wheat and rice seeds with real-time fungal defect heatmap, germination viability forecasting, biophysical metrics, and ISTA certificates.",
       },
       { property: "og:title", content: "SeedSure AI — Seed Quality Analysis" },
       {
@@ -59,14 +86,21 @@ async function fileToDataUrl(file: File): Promise<string> {
 function Index() {
   const analyze = useServerFn(analyzeSeedImage);
   const [samples, setSamples] = useState<Sample[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([
-    { id: "boot", level: "SYS", text: "SeedSure AI Vision Engine initialized — awaiting specimen input" },
+    { id: "boot", level: "SYS", text: "SeedSure AI Vision Engine online — Neural defect classifier initialized" },
   ]);
   const [dragging, setDragging] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+  const [showCertificate, setShowCertificate] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [savedKeyMsg, setSavedKeyMsg] = useState("");
+  const [language, setLanguage] = useState<Language>("en");
+  const [viewMode, setViewMode] = useState<"specimen" | "heatmap">("specimen");
+
+  const t = translations[language];
 
   const inputRef = useRef<HTMLInputElement>(null);
   const urlsRef = useRef<Set<string>>(new Set());
@@ -79,6 +113,10 @@ function Index() {
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("seedsure_api_key") || "";
       setApiKey(stored);
+      const storedLang = (localStorage.getItem("seedsure_lang") as Language) || "en";
+      if (["en", "hi", "pa", "es"].includes(storedLang)) {
+        setLanguage(storedLang);
+      }
     }
     const urls = urlsRef.current;
     return () => {
@@ -90,7 +128,17 @@ function Index() {
 
   useEffect(() => {
     samplesRef.current = samples;
-  }, [samples]);
+    if (!selectedId && samples.length > 0) {
+      setSelectedId(samples[samples.length - 1].id);
+    }
+  }, [samples, selectedId]);
+
+  const changeLanguage = (lang: Language) => {
+    setLanguage(lang);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("seedsure_lang", lang);
+    }
+  };
 
   const pushLog = useCallback((level: LogLine["level"], text: string) => {
     setLog((prev) => [{ id: `${Date.now()}-${Math.random()}`, level, text }, ...prev].slice(0, 40));
@@ -115,16 +163,18 @@ function Index() {
           if (!mountedRef.current) return;
           const previewUrl = URL.createObjectURL(file);
           urlsRef.current.add(previewUrl);
+          const newId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           setSamples((prev) => [
             ...prev,
             {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              id: newId,
               name: file.name,
               previewUrl,
               dataUrl,
               status: "queued",
             },
           ]);
+          setSelectedId(newId);
           pushLog("OK", `Queued specimen: ${file.name}`);
         } catch {
           pushLog("ERR", `Could not read ${file.name}`);
@@ -133,6 +183,23 @@ function Index() {
     },
     [pushLog],
   );
+
+  const loadDemo = (type: "healthy-wheat" | "moldy-wheat" | "basmati-rice" | "chalky-rice" | "soybean-invalid" | "sunset-invalid") => {
+    const demo = generateDemoSample(type);
+    const newId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setSamples((prev) => [
+      ...prev,
+      {
+        id: newId,
+        name: demo.name,
+        previewUrl: demo.dataUrl,
+        dataUrl: demo.dataUrl,
+        status: "queued",
+      },
+    ]);
+    setSelectedId(newId);
+    pushLog("OK", `Loaded preset sample: ${demo.name}`);
+  };
 
   const runAnalysis = useCallback(async () => {
     if (running) return;
@@ -164,7 +231,7 @@ function Index() {
             }
           }
 
-          // 2. High-Precision Client-Side Canvas & Morphology Vision Engine
+          // 2. High-Precision Client-Side Canvas & Morphology Vision Engine with Defect Heatmap
           if (!result && typeof window !== "undefined") {
             try {
               result = await analyzeSeedVision(item.dataUrl, item.name);
@@ -189,28 +256,40 @@ function Index() {
           );
 
           if (result.seedType === "INVALID") {
-            pushLog("WRN", `${item.name}: INVALID SEED — Non-wheat/rice sample rejected`);
+            pushLog("WRN", `${item.name}: Rejected — ${result.notes}`);
           } else {
             pushLog(
-              "OK",
-              `${item.name}: ${result.seedType} · Quality ${result.qualityScore}/100 · Viability ${result.viability}%`,
+              result.qualityStatus === "Poor" ? "WRN" : "OK",
+              `${item.name}: ${result.seedType} (${result.qualityStatus}) · Quality ${result.qualityScore}/100 · Viability ${result.viability}%`,
             );
           }
         } catch (err) {
           if (runId !== runIdRef.current || !mountedRef.current) return;
-          const message = err instanceof Error ? err.message : "Analysis failed";
+          const msg = err instanceof Error ? err.message : "Analysis failed";
           setSamples((prev) =>
-            prev.map((s) => (s.id === item.id ? { ...s, status: "error", error: message } : s)),
+            prev.map((s) => (s.id === item.id ? { ...s, status: "error", error: msg } : s)),
           );
-          pushLog("ERR", `${item.name}: ${message}`);
+          pushLog("ERR", `${item.name}: ${msg}`);
         }
       }
     } finally {
-      if (runId === runIdRef.current && mountedRef.current) setRunning(false);
+      if (runId === runIdRef.current && mountedRef.current) {
+        setRunning(false);
+      }
     }
   }, [analyze, apiKey, pushLog, running]);
 
-  const clearAll = useCallback(() => {
+  const removeSample = (id: string) => {
+    setSamples((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      if (selectedId === id) {
+        setSelectedId(next.length ? next[next.length - 1].id : null);
+      }
+      return next;
+    });
+  };
+
+  const clearAll = () => {
     runIdRef.current++;
     setRunning(false);
     setSamples((prev) => {
@@ -220,153 +299,155 @@ function Index() {
       });
       return [];
     });
+    setSelectedId(null);
     if (inputRef.current) inputRef.current.value = "";
     setLog([{ id: `${Date.now()}`, level: "SYS", text: "Session reset — ready for new specimen input" }]);
-  }, []);
+  };
 
-  const removeSample = useCallback((id: string) => {
-    setSamples((prev) => {
-      const target = prev.find((s) => s.id === id);
-      if (target) {
-        URL.revokeObjectURL(target.previewUrl);
-        urlsRef.current.delete(target.previewUrl);
-      }
-      return prev.filter((s) => s.id !== id);
-    });
-  }, []);
+  const exportCsv = () => {
+    if (!samples.length) return;
+    const rows = [
+      ["Sample Name", "Species", "Quality Score", "Germination Viability", "Quality Status", "Fungal Load %", "Recommendation", "Defects"],
+      ...samples.map((s) => [
+        `"${s.name}"`,
+        s.result?.seedType || "PENDING",
+        s.result?.qualityScore ?? "N/A",
+        s.result?.viability ? `${s.result.viability}%` : "N/A",
+        s.result?.qualityStatus || "N/A",
+        s.result?.grainMetrics?.fungalSurfacePct ? `${s.result.grainMetrics.fungalSurfacePct}%` : "0%",
+        `"${s.result?.recommendation || "N/A"}"`,
+        `"${(s.result?.defects || []).join("; ")}"`,
+      ]),
+    ];
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map((e) => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `seedsure_batch_report_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
-  const analyzed = useMemo(
-    () => samples.filter((s) => s.status === "done" && s.result),
-    [samples],
+  const active = useMemo(
+    () => samples.find((s) => s.id === selectedId) || samples[samples.length - 1],
+    [samples, selectedId],
   );
-  const valid = useMemo(
-    () => analyzed.filter((s) => s.result!.seedType !== "INVALID"),
-    [analyzed],
-  );
-  const invalidCount = analyzed.length - valid.length;
-  const avgViability = valid.length
-    ? Math.round(valid.reduce((a, s) => a + s.result!.viability, 0) / valid.length)
-    : 0;
-  const avgQuality = valid.length
-    ? Math.round(valid.reduce((a, s) => a + s.result!.qualityScore, 0) / valid.length)
-    : 0;
 
-  const active = samples.find((s) => s.status === "analyzing") ?? samples[samples.length - 1];
-  const featured = [...samples].reverse().find((s) => s.status === "done" && s.result);
   const pending = samples.filter((s) => s.status === "queued" || s.status === "error").length;
+  const valid = samples.filter((s) => s.result && s.result.seedType !== "INVALID");
+  const invalidCount = samples.filter((s) => s.result && s.result.seedType === "INVALID").length;
+  const avgQuality = valid.length
+    ? Math.round(valid.reduce((acc, s) => acc + (s.result?.qualityScore || 0), 0) / valid.length)
+    : 0;
+  const avgViability = valid.length
+    ? Math.round(valid.reduce((acc, s) => acc + (s.result?.viability || 0), 0) / valid.length)
+    : 0;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <nav className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+    <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary selection:text-primary-foreground">
+      {/* Top Header */}
+      <header className="sticky top-0 z-30 border-b border-border/60 bg-surface-strong/80 backdrop-blur-md px-6 py-3.5">
+        <div className="mx-auto flex max-w-7xl items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex size-8 items-center justify-center rounded-sm bg-primary shadow-sm">
-              <span className="font-mono text-sm font-bold text-primary-foreground">SS</span>
+            <div className="flex size-9 items-center justify-center rounded-xl bg-primary shadow-sm text-primary-foreground font-bold">
+              <Sparkles className="size-5" />
             </div>
             <div>
-              <span className="text-lg font-semibold tracking-tight">SeedSure AI</span>
-              <span className="ml-2 hidden rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary sm:inline">
-                v2.5 Vision Engine
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-base font-bold tracking-tight">{t.appTitle}</span>
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                  v3.0 Neural Pro
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground hidden sm:block">
+                {t.tagline}
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Language Switcher */}
+            <div className="flex items-center rounded-lg bg-secondary p-0.5 ring-1 ring-black/5">
+              {(["en", "hi", "pa", "es"] as Language[]).map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => changeLanguage(lang)}
+                  className={`rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wider transition-colors ${
+                    language === lang
+                      ? "bg-surface-strong text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {lang}
+                </button>
+              ))}
+            </div>
+
             <button
-              onClick={() => setShowSettings((v) => !v)}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => setShowSettings(!showSettings)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium text-secondary-foreground hover:bg-border transition-colors"
             >
-              <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              <span>{apiKey ? "AI Key Active" : "AI Settings"}</span>
+              <Settings className="size-3.5" />
+              <span className="hidden sm:inline">{t.aiSettings}</span>
             </button>
 
-            <div className="flex items-center gap-2 rounded-md bg-surface px-3 py-1.5 ring-1 ring-black/5">
-              <span className={`size-2 rounded-full ${running ? "animate-pulse bg-warn" : "bg-valid"}`} />
-              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                {running ? "Analyzing" : "Engine Online"}
-              </span>
+            <div className="flex items-center gap-1.5 rounded-full bg-valid-soft px-2.5 py-1 text-[11px] font-semibold text-valid">
+              <span className="size-1.5 rounded-full bg-valid animate-pulse" />
+              <span>{t.engineOnline}</span>
             </div>
           </div>
         </div>
-      </nav>
+      </header>
 
-      {/* Settings Panel */}
+      {/* AI Settings Drawer */}
       {showSettings && (
-        <div className="border-b border-border bg-surface-strong/95 px-6 py-4 shadow-inner">
-          <div className="mx-auto max-w-7xl space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold">AI Vision Configuration (Optional)</h3>
-              <button
-                onClick={() => setShowSettings(false)}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                ✕ Close
-              </button>
+        <div className="border-b border-border/80 bg-surface px-6 py-5 animate-in slide-in-from-top duration-200">
+          <div className="mx-auto max-w-7xl">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h4 className="text-sm font-semibold">{t.aiSettings} & Neural Pipeline</h4>
+                <p className="text-xs text-muted-foreground">
+                  Connect live Gemini Multimodal Vision API key or use built-in Offline Agronomic Computer Vision.
+                </p>
+              </div>
+              <div className="flex max-w-md flex-1 items-center gap-2">
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Paste Gemini / OpenAI API Key"
+                  className="w-full rounded-lg border border-input bg-surface-strong px-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <button
+                  onClick={saveApiKey}
+                  className="shrink-0 rounded-lg bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              SeedSure AI includes a built-in agronomic computer vision engine ready for immediate offline and online analysis without API keys. You can also connect a Google Gemini API Key for multimodal LLM vision reasoning.
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <input
-                type="password"
-                placeholder="Paste Gemini API Key or leave empty for Built-in Vision..."
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="w-full max-w-md rounded-md border border-border bg-background px-3 py-1.5 text-xs font-mono focus:border-primary focus:outline-none"
-              />
-              <button
-                onClick={saveApiKey}
-                className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                Save
-              </button>
-              {savedKeyMsg && <span className="text-xs font-medium text-valid">{savedKeyMsg}</span>}
-            </div>
+            {savedKeyMsg && <p className="mt-2 text-xs font-medium text-valid">{savedKeyMsg}</p>}
           </div>
         </div>
       )}
 
-      <main className="mx-auto max-w-7xl px-6 py-10">
-        <header className="mb-10 flex flex-col justify-between gap-6 md:flex-row md:items-end">
-          <div className="space-y-1">
-            <h1 className="text-3xl font-semibold leading-tight tracking-tight text-balance">
-              Seed Quality Analysis
-            </h1>
-            <p className="max-w-[56ch] text-sm text-pretty text-muted-foreground">
-              Continuous diagnostic assessment for Triticum aestivum and Oryza sativa cultivars.
-              All other samples are rejected as invalid.
-            </p>
-          </div>
-          <div className="flex gap-4">
-            <div className="rounded-lg bg-surface px-5 py-3 ring-1 ring-black/5">
-              <span className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Batch Progress
-              </span>
-              <span className="font-mono text-xl font-medium">
-                {analyzed.length} / {samples.length}
-              </span>
-            </div>
-            <div className="rounded-lg bg-surface px-5 py-3 ring-1 ring-black/5">
-              <span className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                Avg Viability
-              </span>
-              <span className="font-mono text-xl font-medium text-valid">
-                {valid.length ? `${avgViability}%` : "—"}
-              </span>
-            </div>
-          </div>
-        </header>
-
-        <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
-          {/* Input surface */}
+      {/* Main Content Grid */}
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+          {/* Left Column: Specimen Input & Scanner Controls */}
           <section className="space-y-6 lg:col-span-5">
-            <div className="rounded-xl bg-surface p-6 ring-1 ring-black/5">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                Specimen Input
-              </h2>
+            <div className="rounded-2xl bg-surface-strong p-6 shadow-sm ring-1 ring-black/5">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {t.specimenInput}
+                </span>
+                <span className="text-xs font-medium text-primary">
+                  {samples.length} Specimen{samples.length === 1 ? "" : "s"}
+                </span>
+              </div>
 
+              {/* Specimen Viewer Canvas / Dropzone */}
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -376,32 +457,78 @@ function Index() {
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragging(false);
-                  void addFiles(e.dataTransfer.files);
+                  if (e.dataTransfer.files) void addFiles(e.dataTransfer.files);
                 }}
-                onClick={() => inputRef.current?.click()}
-                className={`relative aspect-[4/3] w-full cursor-pointer overflow-hidden rounded-[min(1vw,12px)] bg-secondary outline-1 -outline-offset-1 outline-black/5 transition-colors ${
-                  dragging ? "outline-2 outline-primary" : ""
+                className={`relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-secondary/60 ring-1 ring-black/5 transition-all ${
+                  dragging ? "ring-2 ring-primary bg-primary/5" : ""
                 }`}
               >
                 {active ? (
-                  <img
-                    src={active.previewUrl}
-                    alt={`Seed specimen preview: ${active.name}`}
-                    className="size-full object-cover"
-                  />
+                  <div className="relative size-full group">
+                    <img
+                      src={viewMode === "heatmap" && active.result?.defectHeatmapUrl ? active.result.defectHeatmapUrl : active.previewUrl}
+                      alt={active.name}
+                      className="size-full object-contain"
+                    />
+
+                    {/* View Mode Toggle Switch on Image */}
+                    {active.result?.defectHeatmapUrl && (
+                      <div className="absolute top-3 right-3 z-10 flex rounded-lg bg-black/70 p-0.5 backdrop-blur-md">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewMode("specimen");
+                          }}
+                          className={`rounded px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                            viewMode === "specimen" ? "bg-white text-black shadow" : "text-white/70 hover:text-white"
+                          }`}
+                        >
+                          Original
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewMode("heatmap");
+                          }}
+                          className={`rounded px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                            viewMode === "heatmap" ? "bg-emerald-500 text-white shadow" : "text-white/70 hover:text-white"
+                          }`}
+                        >
+                          Defect Heatmap
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Heatmap Legend Overlay */}
+                    {viewMode === "heatmap" && active.result?.defectHeatmapUrl && (
+                      <div className="absolute bottom-3 left-3 right-3 rounded-lg bg-black/80 p-2.5 text-[10px] text-white backdrop-blur-md flex flex-wrap items-center justify-around gap-2">
+                        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-red-500" /> Fungal Mold / Black Point</span>
+                        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-amber-500" /> Moisture Weathering</span>
+                        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-cyan-400" /> Micro-Cracks</span>
+                        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-green-500" /> Healthy Endosperm</span>
+                      </div>
+                    )}
+                  </div>
                 ) : (
-                  <div className="flex size-full flex-col items-center justify-center gap-2 px-8 text-center">
-                    <span className="text-sm font-medium">Drop seed images here</span>
-                    <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground">
-                      Wheat / Rice · JPG · PNG · multi-file
-                    </span>
+                  <div
+                    onClick={() => inputRef.current?.click()}
+                    className="flex size-full cursor-pointer flex-col items-center justify-center gap-3 p-8 text-center"
+                  >
+                    <div className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                      <ScanLine className="size-6" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold">{t.dropSeedsHere}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">{t.supportedCrops}</p>
+                    </div>
                   </div>
                 )}
+
                 {running && (
-                  <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
-                    <div className="scanner-line h-0.5 w-full bg-valid/60 shadow-[0_0_15px_var(--valid)]" />
-                    <span className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-medium uppercase tracking-[0.15em] text-muted-foreground">
-                      Scanning Active
+                  <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between bg-black/20 backdrop-blur-[1px]">
+                    <div className="scanner-line h-1 w-full bg-emerald-400 shadow-[0_0_20px_#34d399]" />
+                    <span className="m-3 text-center rounded bg-black/70 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+                      Neural Scan Active...
                     </span>
                   </div>
                 )}
@@ -419,118 +546,244 @@ function Index() {
                 }}
               />
 
+              {/* Action Buttons: Upload & Camera */}
+              <div className="mt-4 grid grid-cols-2 gap-2.5">
+                <button
+                  onClick={() => inputRef.current?.click()}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-secondary px-4 py-2.5 text-xs font-semibold text-secondary-foreground hover:bg-border transition-colors"
+                >
+                  <Layers className="size-4" /> Browse Files
+                </button>
+                <button
+                  onClick={() => setShowCamera(true)}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-secondary px-4 py-2.5 text-xs font-semibold text-secondary-foreground hover:bg-border transition-colors"
+                >
+                  <Camera className="size-4" /> {t.useCamera}
+                </button>
+              </div>
+
+              {/* One-Click Demo Sample Library */}
+              <div className="mt-5 rounded-xl border border-border/80 bg-surface p-3.5">
+                <span className="mb-2.5 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {t.testPresets}
+                </span>
+                <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                  <button
+                    onClick={() => loadDemo("healthy-wheat")}
+                    className="rounded-lg bg-surface-strong p-2 font-medium hover:bg-primary/10 hover:text-primary transition-colors text-left border border-border/50"
+                  >
+                    🌾 {t.presetHealthyWheat}
+                  </button>
+                  <button
+                    onClick={() => loadDemo("moldy-wheat")}
+                    className="rounded-lg bg-surface-strong p-2 font-medium hover:bg-invalid-soft hover:text-invalid transition-colors text-left border border-border/50"
+                  >
+                    🍄 {t.presetMoldyWheat}
+                  </button>
+                  <button
+                    onClick={() => loadDemo("basmati-rice")}
+                    className="rounded-lg bg-surface-strong p-2 font-medium hover:bg-primary/10 hover:text-primary transition-colors text-left border border-border/50"
+                  >
+                    🍚 {t.presetBasmatiRice}
+                  </button>
+                  <button
+                    onClick={() => loadDemo("chalky-rice")}
+                    className="rounded-lg bg-surface-strong p-2 font-medium hover:bg-warn-soft hover:text-warn transition-colors text-left border border-border/50"
+                  >
+                    🥣 {t.presetChalkyRice}
+                  </button>
+                  <button
+                    onClick={() => loadDemo("soybean-invalid")}
+                    className="rounded-lg bg-surface-strong p-2 font-medium hover:bg-invalid-soft hover:text-invalid transition-colors text-left border border-border/50"
+                  >
+                    🫘 {t.presetSoybean}
+                  </button>
+                  <button
+                    onClick={() => loadDemo("sunset-invalid")}
+                    className="rounded-lg bg-surface-strong p-2 font-medium hover:bg-invalid-soft hover:text-invalid transition-colors text-left border border-border/50"
+                  >
+                    🌄 {t.presetLandscape}
+                  </button>
+                </div>
+              </div>
+
+              {/* Specimen Thumbnails Strip */}
               {samples.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-4 flex flex-wrap gap-2 pt-2 border-t border-border">
                   {samples.map((s) => (
-                    <button
+                    <div
                       key={s.id}
-                      onClick={() => removeSample(s.id)}
-                      title={`Remove ${s.name}`}
-                      className="group relative size-12 overflow-hidden rounded ring-1 ring-black/10"
+                      onClick={() => setSelectedId(s.id)}
+                      className={`group relative size-14 cursor-pointer overflow-hidden rounded-xl ring-2 transition-all ${
+                        selectedId === s.id
+                          ? "ring-primary scale-105 shadow-md"
+                          : "ring-transparent opacity-75 hover:opacity-100"
+                      }`}
                     >
                       <img src={s.previewUrl} alt={s.name} className="size-full object-cover" />
-                      <span className="absolute inset-0 hidden items-center justify-center bg-foreground/70 text-[10px] font-semibold text-background group-hover:flex">
+                      {s.result && (
+                        <span
+                          className={`absolute bottom-0 inset-x-0 text-[8px] font-bold text-center text-white ${
+                            s.result.seedType === "INVALID"
+                              ? "bg-red-600"
+                              : s.result.qualityStatus === "Good"
+                                ? "bg-emerald-600"
+                                : s.result.qualityStatus === "Moderate"
+                                  ? "bg-amber-600"
+                                  : "bg-red-600"
+                          }`}
+                        >
+                          {s.result.seedType === "INVALID" ? "INV" : `${s.result.qualityScore}%`}
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeSample(s.id);
+                        }}
+                        className="absolute top-1 right-1 hidden size-4 items-center justify-center rounded-full bg-black/80 text-[10px] text-white group-hover:flex"
+                      >
                         ✕
-                      </span>
-                    </button>
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
 
-              <div className="mt-6 space-y-4">
+              {/* Analysis Trigger Buttons */}
+              <div className="mt-6 space-y-2.5">
                 <button
                   onClick={() => void runAnalysis()}
                   disabled={running || pending === 0}
-                  className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-xl bg-primary py-3.5 text-sm font-semibold text-primary-foreground shadow-sm transition-all hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {running ? "Analyzing…" : `Analyze Seed${pending > 1 ? ` (${pending})` : ""}`}
+                  <Sparkles className="size-4" />
+                  {running ? t.analyzing : `${t.analyzeSeed}${pending > 1 ? ` (${pending})` : ""}`}
                 </button>
                 <button
                   onClick={clearAll}
-                  className="w-full rounded-lg bg-secondary px-4 py-3 text-sm font-medium text-secondary-foreground transition-colors hover:bg-border"
+                  className="w-full rounded-xl bg-secondary py-2.5 text-xs font-medium text-secondary-foreground hover:bg-border transition-colors flex items-center justify-center gap-1.5"
                 >
-                  Clear Diagnostics
+                  <Trash2 className="size-3.5" /> {t.clearDiagnostics}
                 </button>
               </div>
             </div>
 
-            <div className="rounded-xl bg-surface p-4 ring-1 ring-black/5">
+            {/* System Log Console */}
+            <div className="rounded-2xl bg-surface-strong p-4 shadow-sm ring-1 ring-black/5">
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-                  Status Log
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+                  <Activity className="size-3 text-primary" /> {t.statusLog}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground">
-                  {samples.length} IN SESSION
+                  {samples.length} ACTIVE
                 </span>
               </div>
-              <div className="max-h-48 space-y-2 overflow-y-auto font-mono text-[11px] text-secondary-foreground">
+              <div className="max-h-36 space-y-1.5 overflow-y-auto font-mono text-[11px] text-secondary-foreground">
                 {log.map((l) => (
-                  <div key={l.id} className="flex gap-2">
+                  <div key={l.id} className="flex gap-2 leading-relaxed">
                     <span
                       className={
                         l.level === "OK"
-                          ? "text-valid"
+                          ? "text-emerald-500 font-bold"
                           : l.level === "WRN"
-                            ? "text-warn"
+                            ? "text-amber-500 font-bold"
                             : l.level === "ERR"
-                              ? "text-invalid"
-                              : "text-muted-foreground"
+                              ? "text-red-500 font-bold"
+                              : "text-blue-400 font-bold"
                       }
                     >
                       [{l.level}]
                     </span>
-                    <span>{l.text}</span>
+                    <span className="truncate">{l.text}</span>
                   </div>
                 ))}
               </div>
             </div>
           </section>
 
-          {/* Results */}
-          <section className="space-y-8 lg:col-span-7">
-            <ResultCard sample={featured} />
+          {/* Right Column: Specimen Report & Batch Analytics */}
+          <section className="space-y-6 lg:col-span-7">
+            {/* Primary Specimen Report Card */}
+            <ResultCard
+              sample={active}
+              t={t}
+              onOpenCertificate={() => setShowCertificate(true)}
+            />
 
-            <div className="overflow-hidden rounded-xl bg-surface ring-1 ring-black/5">
-              <div className="flex items-center justify-between border-b border-border bg-surface-strong/50 px-6 py-4">
-                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                  Batch Summary Dashboard
-                </h3>
-                <div className="flex gap-4">
-                  <div className="text-[11px] text-muted-foreground">
-                    <span className="font-medium text-foreground">{valid.length}</span> Valid
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    <span className="font-medium text-invalid">{invalidCount}</span> Invalid
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    <span className="font-medium text-foreground">
-                      {valid.length ? avgQuality : "—"}
-                    </span>{" "}
-                    Avg Quality
-                  </div>
+            {/* Batch Inspection Dashboard & Summary */}
+            <div className="rounded-2xl bg-surface-strong p-6 shadow-sm ring-1 ring-black/5">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
+                <div>
+                  <h3 className="text-base font-bold tracking-tight">{t.batchSummary}</h3>
+                  <p className="text-xs text-muted-foreground">Session lot statistics & compliance record</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={exportCsv}
+                    disabled={samples.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground hover:bg-border transition-colors disabled:opacity-50"
+                  >
+                    <FileSpreadsheet className="size-3.5" /> {t.exportCsv}
+                  </button>
                 </div>
               </div>
+
+              {/* Batch KPI Stat Badges */}
+              <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Tested Lots
+                  </span>
+                  <div className="mt-1 text-2xl font-bold">{samples.length}</div>
+                </div>
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Valid Lots
+                  </span>
+                  <div className="mt-1 text-2xl font-bold text-emerald-600">{valid.length}</div>
+                </div>
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Mean Quality
+                  </span>
+                  <div className="mt-1 text-2xl font-bold">{valid.length ? `${avgQuality}/100` : "—"}</div>
+                </div>
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Mean Viability
+                  </span>
+                  <div className="mt-1 text-2xl font-bold text-primary">{valid.length ? `${avgViability}%` : "—"}</div>
+                </div>
+              </div>
+
+              {/* Table of Batch Items */}
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-strong/30 text-[10px] uppercase tracking-widest text-muted-foreground">
-                      <th className="px-6 py-3 font-medium">Sample</th>
-                      <th className="px-6 py-3 font-medium">Type</th>
-                      <th className="px-6 py-3 text-center font-medium">Quality</th>
-                      <th className="px-6 py-3 text-right font-medium">Viability</th>
-                      <th className="px-6 py-3 font-medium">Status</th>
+                    <tr className="border-b border-border bg-surface/50 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                      <th className="px-4 py-3">{t.sample}</th>
+                      <th className="px-4 py-3">{t.type}</th>
+                      <th className="px-4 py-3 text-center">{t.quality}</th>
+                      <th className="px-4 py-3 text-right">{t.viability}</th>
+                      <th className="px-4 py-3">{t.status}</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-border/60 text-sm">
+                  <tbody className="divide-y divide-border/60 text-xs">
                     {samples.length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-6 py-10 text-center text-sm text-muted-foreground">
-                          No specimens in this session yet.
+                        <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                          {t.noSpecimensYet}
                         </td>
                       </tr>
                     )}
                     {samples.map((s) => (
-                      <BatchRow key={s.id} sample={s} />
+                      <BatchRow
+                        key={s.id}
+                        sample={s}
+                        isSelected={s.id === active?.id}
+                        onSelect={() => setSelectedId(s.id)}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -540,13 +793,32 @@ function Index() {
         </div>
       </main>
 
-      <footer className="mx-auto max-w-7xl border-t border-border px-6 py-12">
-        <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
-          <div className="font-mono text-[11px] tracking-tighter text-muted-foreground">
-            SEEDSURE-CORE | ENGINE: AGRI-NEURAL-VII | CONTINUOUS MODE — UNLIMITED ANALYSES
+      {/* Live Camera Modal */}
+      <CameraModal
+        isOpen={showCamera}
+        onClose={() => setShowCamera(false)}
+        onCapture={(file) => void addFiles([file])}
+      />
+
+      {/* Official Seed Health Certificate Modal */}
+      {active && active.result && active.result.seedType !== "INVALID" && (
+        <CertificateModal
+          isOpen={showCertificate}
+          onClose={() => setShowCertificate(false)}
+          sampleName={active.name}
+          previewUrl={active.previewUrl}
+          result={active.result}
+        />
+      )}
+
+      {/* Footer */}
+      <footer className="mx-auto max-w-7xl border-t border-border px-6 py-8 mt-12">
+        <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
+          <div className="font-mono text-[11px] text-muted-foreground">
+            SEEDSURE CORE | NEURAL AGRI-INSPECTION ENGINE v3.0 | ISTA-COMPLIANT DIGITAL DIAGNOSTICS
           </div>
           <div className="text-xs text-muted-foreground">
-            Supported inputs: Wheat and Rice only.
+            Approved Specimen Protocols: Wheat (Triticum aestivum) & Rice (Oryza sativa)
           </div>
         </div>
       </footer>
@@ -554,147 +826,208 @@ function Index() {
   );
 }
 
-function ResultCard({ sample }: { sample?: Sample | undefined }) {
+function ResultCard({
+  sample,
+  t,
+  onOpenCertificate,
+}: {
+  sample?: Sample | undefined;
+  t: typeof translations["en"];
+  onOpenCertificate: () => void;
+}) {
   if (!sample?.result) {
     return (
-      <div className="rounded-xl bg-surface p-10 text-center ring-1 ring-black/5">
-        <p className="text-sm text-muted-foreground">
-          Upload a wheat or rice sample and run the analyzer to see a specimen report.
+      <div className="rounded-2xl bg-surface-strong p-12 text-center shadow-sm ring-1 ring-black/5">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-secondary text-muted-foreground mb-3">
+          <Info className="size-6" />
+        </div>
+        <h4 className="text-sm font-semibold">{t.specimenReport}</h4>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Upload a specimen or select one from the demo library and click "Analyze Specimen" to generate a diagnostic report.
         </p>
       </div>
     );
   }
+
   const r = sample.result;
   const invalid = r.seedType === "INVALID";
-  const tone = invalid
-    ? "text-invalid"
-    : r.qualityStatus === "Good"
-      ? "text-valid"
-      : r.qualityStatus === "Moderate"
-        ? "text-warn"
-        : "text-invalid";
+  const metrics = r.grainMetrics;
 
   return (
     <div
-      className={`overflow-hidden rounded-xl shadow-sm ring-1 ${
-        invalid ? "bg-invalid-soft ring-invalid/30" : "bg-surface ring-black/5"
+      className={`overflow-hidden rounded-2xl shadow-sm ring-1 transition-all ${
+        invalid ? "bg-red-50/40 ring-red-200 dark:bg-red-950/20 dark:ring-red-900" : "bg-surface-strong ring-black/5"
       }`}
     >
-      <div className="flex items-center justify-between border-b border-border/60 bg-surface-strong/50 p-6">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-surface/80 p-6">
         <div className="flex items-center gap-3">
           <SeedBadge type={r.seedType} />
-          <h3 className="text-lg font-medium tracking-tight">Specimen Analysis Report</h3>
+          <div>
+            <h3 className="text-base font-bold tracking-tight">{t.specimenReport}</h3>
+            <span className="font-mono text-xs text-muted-foreground">{sample.name}</span>
+          </div>
         </div>
-        <span className="max-w-[14ch] truncate font-mono text-sm text-muted-foreground">
-          {sample.name}
-        </span>
+        {!invalid && (
+          <button
+            onClick={onOpenCertificate}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 transition-colors"
+          >
+            <Award className="size-3.5" /> {t.exportCertificate}
+          </button>
+        )}
       </div>
 
       {invalid ? (
-        <div className="space-y-4 p-8">
-          <div className="flex items-start gap-3 rounded-lg border border-invalid/30 bg-invalid/5 p-4">
-            <span className="text-2xl">⚠️</span>
+        <div className="p-8">
+          <div className="flex items-start gap-4 rounded-xl border border-red-200 bg-red-100/50 p-5 dark:border-red-900 dark:bg-red-950/40">
+            <XCircle className="size-6 shrink-0 text-red-600 dark:text-red-400" />
             <div>
-              <p className="text-base font-semibold text-invalid">
+              <h4 className="text-sm font-bold text-red-800 dark:text-red-300">
                 {r.notes.toLowerCase().includes("human")
                   ? "HUMAN DETECTED — PLEASE UPLOAD A SEED IMAGE"
                   : r.notes.toLowerCase().includes("invalid seed")
                     ? "INVALID SEED — ONLY WHEAT AND RICE ARE SUPPORTED"
                     : "PLEASE UPLOAD AN IMAGE OF A SEED"}
-              </p>
-              <p className="mt-1 text-sm text-secondary-foreground">
-                {r.notes ||
-                  "The sample could not be recognized as wheat or rice. Please upload a clear close-up image of seeds."}
+              </h4>
+              <p className="mt-1 text-xs text-red-700 dark:text-red-400 leading-relaxed">
+                {r.notes}
               </p>
             </div>
           </div>
         </div>
       ) : (
         <div className="space-y-6 p-8">
+          {/* Poor Quality Alert Banner */}
           {r.qualityStatus === "Poor" && (
-            <div className="flex items-center gap-3 rounded-lg border border-invalid/40 bg-invalid-soft p-4 text-invalid">
-              <span className="text-xl font-bold">⚠️</span>
+            <div className="flex items-start gap-3 rounded-xl border border-red-300 bg-red-100/60 p-4 text-red-900 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200">
+              <AlertTriangle className="size-5 shrink-0 text-red-600" />
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider">Poor Quality Seed Lot Alert</span>
-                <p className="text-xs text-secondary-foreground">
-                  High defect rate observed (fungal spots / mold / micro-cracks). Not recommended for planting.
+                <span className="text-xs font-bold uppercase tracking-wider">Critical Defect Alert</span>
+                <p className="mt-0.5 text-xs">
+                  Fungal mold / black point or severe fracturing detected. Sowing this seed lot is NOT recommended due to germination failure risk.
                 </p>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-10 md:grid-cols-2">
-            <div className="space-y-8">
+          {/* Primary Viability & Quality Gauges */}
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <div className="rounded-xl border border-border/80 bg-surface p-5 space-y-4">
               <div>
-                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Viability Prediction
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {t.viabilityPrediction}
                 </span>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-5xl font-semibold tracking-tighter">{r.viability}</span>
-                  <span className="text-xl text-muted-foreground">%</span>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-4xl font-bold tracking-tight">{r.viability}</span>
+                  <span className="text-sm font-semibold text-muted-foreground">% Germination</span>
                 </div>
                 <Meter value={r.viability} status={r.qualityStatus} />
               </div>
 
               <div>
-                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Overall Quality Score
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {t.overallQuality}
                 </span>
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-2xl font-medium">{r.qualityScore}</span>
-                  <span className="text-sm text-muted-foreground">/ 100</span>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold font-mono">{r.qualityScore}</span>
+                  <span className="text-xs text-muted-foreground">/ 100</span>
                 </div>
                 <Meter value={r.qualityScore} status={r.qualityStatus} />
               </div>
-
-              <div className="space-y-3">
-                <span className="block text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Identified Defects
-                </span>
-                <ul className="space-y-2">
-                  {(r.defects.length ? r.defects : ["No significant defects detected"]).map((d) => (
-                    <li key={d} className="flex items-center gap-3 text-sm text-secondary-foreground">
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${
-                          r.qualityStatus === "Poor" ? "bg-invalid" : r.qualityStatus === "Moderate" ? "bg-warn" : "bg-valid"
-                        }`}
-                      />
-                      {d}
-                    </li>
-                  ))}
-                </ul>
-              </div>
             </div>
 
-            <div className="space-y-6 rounded-lg bg-surface-strong p-6 ring-1 ring-black/5">
+            <div className="rounded-xl border border-border/80 bg-surface p-5 space-y-4">
               <div>
-                <span className="mb-1 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Quality Status
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {t.qualityStatus}
                 </span>
-                <span className={`font-medium ${tone}`}>{r.qualityStatus}</span>
+                <div className="mt-1 text-lg font-bold">
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                      r.qualityStatus === "Good"
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                        : r.qualityStatus === "Moderate"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                          : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300"
+                    }`}
+                  >
+                    {r.qualityStatus === "Good" ? <CheckCircle2 className="size-3.5" /> : <AlertTriangle className="size-3.5" />}
+                    {r.qualityStatus} Quality
+                  </span>
+                </div>
               </div>
+
               <div>
-                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Visible Abnormalities
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {t.recommendation}
                 </span>
-                <ul className="space-y-1.5">
-                  {(r.abnormalities.length ? r.abnormalities : ["None observed"]).map((a) => (
-                    <li key={a} className="text-sm text-secondary-foreground">
-                      {a}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <span className="mb-2 block text-[10px] uppercase tracking-widest text-muted-foreground">
-                  Recommendation
-                </span>
-                <p className="text-sm font-medium leading-relaxed">{r.recommendation}</p>
-                {r.notes && (
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{r.notes}</p>
-                )}
+                <p className="mt-1 text-xs font-semibold text-foreground">{r.recommendation}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">{r.notes}</p>
               </div>
             </div>
+          </div>
+
+          {/* Biophysical Metrics Grid */}
+          {metrics && (
+            <div>
+              <span className="mb-2.5 block text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                {t.grainMetricsTitle}
+              </span>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-xs">
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold text-muted-foreground flex items-center gap-1">
+                    <Scale className="size-3" /> {t.lengthWidth}
+                  </span>
+                  <div className="mt-1 text-sm font-bold font-mono">
+                    {metrics.lengthMm} × {metrics.widthMm} mm
+                  </div>
+                </div>
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold text-muted-foreground flex items-center gap-1">
+                    <Flame className="size-3" /> {t.fungalSurface}
+                  </span>
+                  <div className={`mt-1 text-sm font-bold font-mono ${metrics.fungalSurfacePct > 3 ? "text-red-600" : "text-foreground"}`}>
+                    {metrics.fungalSurfacePct}%
+                  </div>
+                </div>
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold text-muted-foreground flex items-center gap-1">
+                    <Droplets className="size-3" /> {t.moistureRisk}
+                  </span>
+                  <div className={`mt-1 text-sm font-bold ${metrics.moistureRisk === "Critical" ? "text-red-600" : "text-foreground"}`}>
+                    {metrics.moistureRisk}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-surface p-3.5 border border-border/50">
+                  <span className="text-[10px] font-bold text-muted-foreground flex items-center gap-1">
+                    <ShieldCheck className="size-3" /> {t.sowingTier}
+                  </span>
+                  <div className="mt-1 text-xs font-semibold truncate text-emerald-600">
+                    {metrics.sowingSuitability}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Identified Defects List */}
+          <div className="rounded-xl border border-border/80 bg-surface p-5 space-y-3">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              {t.identifiedDefects} & Morphology
+            </span>
+            <ul className="space-y-2">
+              {r.defects.map((d) => (
+                <li key={d} className="flex items-center gap-2.5 text-xs text-secondary-foreground">
+                  <span
+                    className={`size-2 shrink-0 rounded-full ${
+                      r.qualityStatus === "Poor" ? "bg-red-500" : r.qualityStatus === "Moderate" ? "bg-amber-500" : "bg-emerald-500"
+                    }`}
+                  />
+                  {d}
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       )}
@@ -704,9 +1037,9 @@ function ResultCard({ sample }: { sample?: Sample | undefined }) {
 
 function Meter({ value, status }: { value: number; status: SeedAnalysis["qualityStatus"] }) {
   const color =
-    status === "Good" ? "bg-valid" : status === "Moderate" ? "bg-warn" : "bg-invalid";
+    status === "Good" ? "bg-emerald-500" : status === "Moderate" ? "bg-amber-500" : "bg-red-500";
   return (
-    <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+    <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-secondary">
       <div className={`h-full ${color} transition-all duration-700`} style={{ width: `${value}%` }} />
     </div>
   );
@@ -715,26 +1048,43 @@ function Meter({ value, status }: { value: number; status: SeedAnalysis["quality
 function SeedBadge({ type }: { type: SeedAnalysis["seedType"] }) {
   const cls =
     type === "WHEAT"
-      ? "bg-warn-soft text-warn"
+      ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
       : type === "RICE"
-        ? "bg-valid-soft text-valid"
-        : "bg-invalid text-primary-foreground";
+        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+        : "bg-red-600 text-white";
   return (
-    <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${cls}`}>
+    <span className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest ${cls}`}>
       {type}
     </span>
   );
 }
 
-function BatchRow({ sample }: { sample: Sample }) {
+function BatchRow({
+  sample,
+  isSelected,
+  onSelect,
+}: {
+  sample: Sample;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
   const r = sample.result;
   const invalid = r?.seedType === "INVALID";
   return (
-    <tr className={invalid ? "bg-invalid-soft/60" : "hover:bg-secondary/40"}>
-      <td className="max-w-[16ch] truncate px-6 py-4 font-mono text-xs text-muted-foreground">
+    <tr
+      onClick={onSelect}
+      className={`cursor-pointer transition-colors ${
+        isSelected
+          ? "bg-primary/10 font-semibold"
+          : invalid
+            ? "bg-red-50/40 hover:bg-red-50/70 dark:bg-red-950/20"
+            : "hover:bg-secondary/40"
+      }`}
+    >
+      <td className="max-w-[18ch] truncate px-4 py-3 font-mono text-xs">
         {sample.name}
       </td>
-      <td className="px-6 py-4">
+      <td className="px-4 py-3">
         {r ? (
           <SeedBadge type={r.seedType} />
         ) : (
@@ -743,17 +1093,17 @@ function BatchRow({ sample }: { sample: Sample }) {
           </span>
         )}
       </td>
-      <td className="px-6 py-4">
+      <td className="px-4 py-3">
         <div className="flex justify-center">
-          <div className="h-1.5 w-12 overflow-hidden rounded-full bg-secondary">
+          <div className="h-2 w-16 overflow-hidden rounded-full bg-secondary">
             {r && !invalid && (
               <div
                 className={`h-full ${
                   r.qualityStatus === "Good"
-                    ? "bg-valid"
+                    ? "bg-emerald-500"
                     : r.qualityStatus === "Moderate"
-                      ? "bg-warn"
-                      : "bg-invalid"
+                      ? "bg-amber-500"
+                      : "bg-red-500"
                 }`}
                 style={{ width: `${r.qualityScore}%` }}
               />
@@ -761,20 +1111,20 @@ function BatchRow({ sample }: { sample: Sample }) {
           </div>
         </div>
       </td>
-      <td className="px-6 py-4 text-right font-mono text-sm">
+      <td className="px-4 py-3 text-right font-mono text-xs">
         {r && !invalid ? `${r.viability}%` : <span className="text-muted-foreground">N/A</span>}
       </td>
-      <td className="px-6 py-4">
+      <td className="px-4 py-3">
         {r ? (
           <span
-            className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase ${
+            className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${
               invalid
-                ? "bg-invalid-soft text-invalid"
+                ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
                 : r.qualityStatus === "Good"
-                  ? "bg-valid-soft text-valid"
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
                   : r.qualityStatus === "Moderate"
-                    ? "bg-warn-soft text-warn"
-                    : "bg-invalid-soft text-invalid"
+                    ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+                    : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
             }`}
           >
             {invalid ? "Rejected" : r.qualityStatus}

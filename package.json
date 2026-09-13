@@ -11,13 +11,14 @@
     "@tanstack/react-query": "latest",
     "@tanstack/react-router": "latest",
     "@tanstack/react-start": "latest",
+    "lucide-react": "^1.45.0",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"
   },
   "devDependencies": {
-    "@tanstack/router-plugin": "latest",
     "@tailwindcss/vite": "latest",
+    "@tanstack/router-plugin": "latest",
     "@vitejs/plugin-react": "latest",
     "tailwindcss": "latest",
     "tw-animate-css": "latest",
